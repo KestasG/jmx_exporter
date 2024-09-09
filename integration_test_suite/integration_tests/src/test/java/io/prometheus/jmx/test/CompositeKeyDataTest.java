@@ -16,64 +16,38 @@
 
 package io.prometheus.jmx.test;
 
-import static io.prometheus.jmx.test.support.MetricsAssertions.assertThatMetricIn;
-import static io.prometheus.jmx.test.support.RequestResponseAssertions.assertThatResponseForRequest;
+import static io.prometheus.jmx.test.support.http.HttpResponseAssertions.assertHttpMetricsResponse;
+import static io.prometheus.jmx.test.support.metrics.MetricAssertion.assertMetric;
 
-import io.prometheus.jmx.test.support.ContentConsumer;
-import io.prometheus.jmx.test.support.HealthyRequest;
-import io.prometheus.jmx.test.support.HealthyResponse;
-import io.prometheus.jmx.test.support.MetricsRequest;
-import io.prometheus.jmx.test.support.MetricsResponse;
-import io.prometheus.jmx.test.support.OpenMetricsRequest;
-import io.prometheus.jmx.test.support.OpenMetricsResponse;
-import io.prometheus.jmx.test.support.PrometheusMetricsRequest;
-import io.prometheus.jmx.test.support.PrometheusMetricsResponse;
+import io.prometheus.jmx.test.common.AbstractExporterTest;
+import io.prometheus.jmx.test.common.ExporterTestEnvironment;
+import io.prometheus.jmx.test.support.http.HttpResponse;
+import io.prometheus.jmx.test.support.metrics.Metric;
+import io.prometheus.jmx.test.support.metrics.MetricsParser;
 import java.util.Collection;
-import org.antublue.test.engine.api.TestEngine;
+import java.util.function.BiConsumer;
 
-public class CompositeKeyDataTest extends BaseTest implements ContentConsumer {
-
-    @TestEngine.Test
-    public void testHealthy() {
-        assertThatResponseForRequest(new HealthyRequest(testState.httpClient()))
-                .isSuperset(HealthyResponse.RESULT_200);
-    }
-
-    @TestEngine.Test
-    public void testMetrics() {
-        assertThatResponseForRequest(new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsOpenMetricsFormat() {
-        assertThatResponseForRequest(new OpenMetricsRequest(testState.httpClient()))
-                .isSuperset(OpenMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsPrometheusFormat() {
-        assertThatResponseForRequest(new PrometheusMetricsRequest(testState.httpClient()))
-                .isSuperset(PrometheusMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
+public class CompositeKeyDataTest extends AbstractExporterTest
+        implements BiConsumer<ExporterTestEnvironment, HttpResponse> {
 
     @Override
-    public void accept(String content) {
-        Collection<Metric> metrics = MetricsParser.parse(content);
+    public void accept(ExporterTestEnvironment exporterTestEnvironment, HttpResponse httpResponse) {
+        assertHttpMetricsResponse(httpResponse);
 
-        assertThatMetricIn(metrics)
+        Collection<Metric> metrics = MetricsParser.parseCollection(httpResponse);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.UNTYPED)
                 .withName("org_exist_management_exist_ProcessReport_RunningQueries_id")
                 .withLabel("key_id", "1")
                 .withLabel("key_path", "/db/query1.xq")
-                .exists();
+                .isPresent();
 
-        assertThatMetricIn(metrics)
+        assertMetric(metrics)
+                .ofType(Metric.Type.UNTYPED)
                 .withName("org_exist_management_exist_ProcessReport_RunningQueries_id")
                 .withLabel("key_id", "2")
                 .withLabel("key_path", "/db/query2.xq")
-                .exists();
+                .isPresent();
     }
 }

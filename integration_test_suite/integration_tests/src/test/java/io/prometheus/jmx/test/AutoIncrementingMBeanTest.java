@@ -16,84 +16,64 @@
 
 package io.prometheus.jmx.test;
 
-import static io.prometheus.jmx.test.support.RequestResponseAssertions.assertThatResponseForRequest;
+import static io.prometheus.jmx.test.support.http.HttpResponseAssertions.assertHttpMetricsResponse;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.prometheus.jmx.test.support.ContentConsumer;
-import io.prometheus.jmx.test.support.HealthyRequest;
-import io.prometheus.jmx.test.support.HealthyResponse;
-import io.prometheus.jmx.test.support.MetricsRequest;
-import io.prometheus.jmx.test.support.MetricsResponse;
+import io.prometheus.jmx.test.common.ExporterTestEnvironment;
+import io.prometheus.jmx.test.support.http.HttpClient;
+import io.prometheus.jmx.test.support.http.HttpPrometheusMetricsRequest;
+import io.prometheus.jmx.test.support.http.HttpResponse;
+import io.prometheus.jmx.test.support.metrics.Metric;
+import io.prometheus.jmx.test.support.metrics.MetricsParser;
 import java.util.Collection;
-import org.antublue.test.engine.api.TestEngine;
+import org.antublue.verifyica.api.ArgumentContext;
+import org.antublue.verifyica.api.Verifyica;
 import org.testcontainers.shaded.com.google.common.util.concurrent.AtomicDouble;
 
-public class AutoIncrementingMBeanTest extends BaseTest {
+public class AutoIncrementingMBeanTest extends MinimalTest {
 
-    @TestEngine.Test
-    public void testHealthy() {
-        assertThatResponseForRequest(new HealthyRequest(testState.httpClient()))
-                .isSuperset(HealthyResponse.RESULT_200);
+    @Verifyica.Test
+    @Verifyica.Order(order = Integer.MAX_VALUE)
+    public void testAutoIncrementingMBean(ArgumentContext argumentContext) {
+        HttpClient httpClient =
+                argumentContext
+                        .getTestArgument(ExporterTestEnvironment.class)
+                        .getPayload()
+                        .getHttpClient();
+
+        // Collect the auto incrementing MBean values
+        double value1 = collect(httpClient);
+        double value2 = collect(httpClient);
+        double value3 = collect(httpClient);
+
+        // Assert that each collection is the previous value + 1
+        assertThat(value2).isGreaterThan(value1);
+        assertThat(value2).isEqualTo(value1 + 1);
+        assertThat(value3).isGreaterThan(value2);
+        assertThat(value3).isEqualTo(value2 + 1);
     }
 
-    @TestEngine.Test
-    public void testMetrics() {
-        AtomicDouble value1 = new AtomicDouble();
-        AtomicDouble value2 = new AtomicDouble();
-        AtomicDouble value3 = new AtomicDouble();
+    /**
+     * Method to collect a value from the auto incrementing MBean
+     *
+     * @return the auto incrementing MBean value
+     */
+    private double collect(HttpClient httpClient) {
+        final AtomicDouble value = new AtomicDouble();
 
-        assertThatResponseForRequest(new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(
-                        (ContentConsumer)
-                                content -> {
-                                    Collection<Metric> metrics = MetricsParser.parse(content);
-                                    metrics.forEach(
-                                            metric -> {
-                                                if (metric.getName()
-                                                        .startsWith(
-                                                                "io_prometheus_jmx_autoIncrementing")) {
-                                                    assertThat(metric.getValue())
-                                                            .isGreaterThanOrEqualTo(1);
-                                                    value1.set(metric.getValue());
-                                                }
-                                            });
-                                });
+        HttpResponse httpResponse = new HttpPrometheusMetricsRequest().send(httpClient);
 
-        assertThatResponseForRequest(new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(
-                        (ContentConsumer)
-                                content -> {
-                                    Collection<Metric> metrics = MetricsParser.parse(content);
-                                    metrics.forEach(
-                                            metric -> {
-                                                if (metric.getName()
-                                                        .startsWith(
-                                                                "io_prometheus_jmx_autoIncrementing")) {
-                                                    value2.set(metric.getValue());
-                                                }
-                                            });
-                                });
+        assertHttpMetricsResponse(httpResponse);
 
-        assertThatResponseForRequest(new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(
-                        (ContentConsumer)
-                                content -> {
-                                    Collection<Metric> metrics = MetricsParser.parse(content);
-                                    metrics.forEach(
-                                            metric -> {
-                                                if (metric.getName()
-                                                        .startsWith(
-                                                                "io_prometheus_jmx_autoIncrementing")) {
-                                                    value3.set(metric.getValue());
-                                                }
-                                            });
-                                });
+        Collection<Metric> metrics = MetricsParser.parseCollection(httpResponse);
 
-        // Use value1 as a baseline value
-        assertThat(value2.get()).isEqualTo(value1.get() + 1);
-        assertThat(value3.get()).isEqualTo(value2.get() + 1);
+        metrics.stream()
+                .filter(metric -> metric.name().startsWith("io_prometheus_jmx_autoIncrementing"))
+                .map(Metric::value)
+                .limit(1)
+                .findFirst()
+                .ifPresent(value::set);
+
+        return value.doubleValue();
     }
 }

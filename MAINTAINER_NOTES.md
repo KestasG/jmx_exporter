@@ -49,6 +49,10 @@ Example
 
 Download the staged artifacts from Maven Central and run the integration test suite.
 
+```
+https://oss.sonatype.org/#stagingRepositories
+```
+
 Example
 
 ```shell
@@ -88,7 +92,7 @@ Checkout the `main` branch and increment the version
 
 ```shell
 git checkout main
-./tools/change-version.sh 0.20.1-SNAPSHOT
+./tools/change-version.sh 1.0.0
 git add -u
 git commit -m "prepare for next development iteration"
 ```

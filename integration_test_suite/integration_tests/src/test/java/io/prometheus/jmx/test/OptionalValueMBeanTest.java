@@ -16,33 +16,96 @@
 
 package io.prometheus.jmx.test;
 
-import static io.prometheus.jmx.test.support.RequestResponseAssertions.assertThatResponseForRequest;
-import static org.assertj.core.api.Assertions.assertThat;
+import static io.prometheus.jmx.test.support.http.HttpResponseAssertions.assertHttpMetricsResponse;
+import static io.prometheus.jmx.test.support.metrics.MetricAssertion.assertMetric;
 
-import io.prometheus.jmx.test.support.ContentConsumer;
-import io.prometheus.jmx.test.support.MetricsRequest;
-import io.prometheus.jmx.test.support.MetricsResponse;
+import io.prometheus.jmx.test.common.AbstractExporterTest;
+import io.prometheus.jmx.test.common.ExporterTestEnvironment;
+import io.prometheus.jmx.test.support.JmxExporterMode;
+import io.prometheus.jmx.test.support.http.HttpResponse;
+import io.prometheus.jmx.test.support.metrics.Metric;
+import io.prometheus.jmx.test.support.metrics.MetricsParser;
 import java.util.Collection;
-import org.antublue.test.engine.api.TestEngine;
+import java.util.Map;
+import java.util.function.BiConsumer;
 
-public class OptionalValueMBeanTest extends BaseTest {
+public class OptionalValueMBeanTest extends AbstractExporterTest
+        implements BiConsumer<ExporterTestEnvironment, HttpResponse> {
 
-    @TestEngine.Test
-    public void testMetrics() {
-        assertThatResponseForRequest(new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(
-                        (ContentConsumer)
-                                content -> {
-                                    Collection<Metric> metrics = MetricsParser.parse(content);
-                                    metrics.forEach(
-                                            metric -> {
-                                                if (metric.getName()
-                                                        .equals(
-                                                                "io_prometheus_jmx_optionalValue_Value")) {
-                                                    assertThat(metric.getValue()).isEqualTo(345.0);
-                                                }
-                                            });
-                                });
+    @Override
+    public void accept(ExporterTestEnvironment exporterTestEnvironment, HttpResponse httpResponse) {
+        assertHttpMetricsResponse(httpResponse);
+
+        Map<String, Collection<Metric>> metrics = MetricsParser.parseMap(httpResponse);
+
+        boolean isJmxExporterModeJavaAgent =
+                exporterTestEnvironment.getJmxExporterMode() == JmxExporterMode.JavaAgent;
+
+        String buildInfoName =
+                isJmxExporterModeJavaAgent
+                        ? "jmx_prometheus_javaagent"
+                        : "jmx_prometheus_httpserver";
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jmx_exporter_build_info")
+                .withLabel("name", buildInfoName)
+                .withValue(1d)
+                .isPresent();
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jmx_scrape_error")
+                .withValue(0d)
+                .isPresent();
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.COUNTER)
+                .withName("jmx_config_reload_success_total")
+                .withValue(0d)
+                .isPresent();
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "nonheap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "heap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "nonheap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "heap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.UNTYPED)
+                .withName("io_prometheus_jmx_tabularData_Server_1_Disk_Usage_Table_size")
+                .withLabel("source", "/dev/sda1")
+                .withValue(7.516192768E9d)
+                .isPresent();
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.UNTYPED)
+                .withName("io_prometheus_jmx_tabularData_Server_2_Disk_Usage_Table_pcent")
+                .withLabel("source", "/dev/sda2")
+                .withValue(0.8d)
+                .isPresent();
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("io_prometheus_jmx_optionalValue_Value")
+                .withValue(345d);
     }
 }

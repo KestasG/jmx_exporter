@@ -16,53 +16,26 @@
 
 package io.prometheus.jmx.test;
 
-import static io.prometheus.jmx.test.support.RequestResponseAssertions.assertThatResponseForRequest;
+import static io.prometheus.jmx.test.support.http.HttpResponseAssertions.assertHttpMetricsResponse;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.prometheus.jmx.test.support.ContentConsumer;
-import io.prometheus.jmx.test.support.HealthyRequest;
-import io.prometheus.jmx.test.support.HealthyResponse;
-import io.prometheus.jmx.test.support.MetricsRequest;
-import io.prometheus.jmx.test.support.MetricsResponse;
-import io.prometheus.jmx.test.support.OpenMetricsRequest;
-import io.prometheus.jmx.test.support.OpenMetricsResponse;
-import io.prometheus.jmx.test.support.PrometheusMetricsRequest;
-import io.prometheus.jmx.test.support.PrometheusMetricsResponse;
+import io.prometheus.jmx.test.common.AbstractExporterTest;
+import io.prometheus.jmx.test.common.ExporterTestEnvironment;
+import io.prometheus.jmx.test.support.http.HttpResponse;
+import io.prometheus.jmx.test.support.metrics.Metric;
+import io.prometheus.jmx.test.support.metrics.MetricsParser;
 import java.util.Collection;
-import org.antublue.test.engine.api.TestEngine;
+import java.util.Locale;
+import java.util.function.BiConsumer;
 
-public class IncludeObjectNamesTest extends BaseTest implements ContentConsumer {
-
-    @TestEngine.Test
-    public void testHealthy() {
-        assertThatResponseForRequest(new HealthyRequest(testState.httpClient()))
-                .isSuperset(HealthyResponse.RESULT_200);
-    }
-
-    @TestEngine.Test
-    public void testMetrics() {
-        assertThatResponseForRequest(new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsOpenMetricsFormat() {
-        assertThatResponseForRequest(new OpenMetricsRequest(testState.httpClient()))
-                .isSuperset(OpenMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsPrometheusFormat() {
-        assertThatResponseForRequest(new PrometheusMetricsRequest(testState.httpClient()))
-                .isSuperset(PrometheusMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
+public class IncludeObjectNamesTest extends AbstractExporterTest
+        implements BiConsumer<ExporterTestEnvironment, HttpResponse> {
 
     @Override
-    public void accept(String content) {
-        Collection<Metric> metrics = MetricsParser.parse(content);
+    public void accept(ExporterTestEnvironment exporterTestEnvironment, HttpResponse httpResponse) {
+        assertHttpMetricsResponse(httpResponse);
+
+        Collection<Metric> metrics = MetricsParser.parseCollection(httpResponse);
 
         /*
          * We have to filter metrics that start with ...
@@ -76,14 +49,22 @@ public class IncludeObjectNamesTest extends BaseTest implements ContentConsumer 
          * ... because they are registered directly and are not MBeans
          */
         metrics.stream()
-                .filter(metric -> !metric.getName().toLowerCase().startsWith("jmx_exporter"))
-                .filter(metric -> !metric.getName().toLowerCase().startsWith("jmx_config"))
-                .filter(metric -> !metric.getName().toLowerCase().startsWith("jmx_scrape"))
-                .filter(metric -> !metric.getName().toLowerCase().startsWith("jvm_"))
-                .filter(metric -> !metric.getName().toLowerCase().startsWith("process_"))
+                .filter(
+                        metric ->
+                                !metric.name()
+                                        .toLowerCase(Locale.ENGLISH)
+                                        .startsWith("jmx_exporter"))
+                .filter(
+                        metric ->
+                                !metric.name().toLowerCase(Locale.ENGLISH).startsWith("jmx_config"))
+                .filter(
+                        metric ->
+                                !metric.name().toLowerCase(Locale.ENGLISH).startsWith("jmx_scrape"))
+                .filter(metric -> !metric.name().toLowerCase(Locale.ENGLISH).startsWith("jvm_"))
+                .filter(metric -> !metric.name().toLowerCase(Locale.ENGLISH).startsWith("process_"))
                 .forEach(
                         metric -> {
-                            String name = metric.getName();
+                            String name = metric.name();
                             boolean match =
                                     name.startsWith("java_lang")
                                             || name.startsWith("io_prometheus_jmx");

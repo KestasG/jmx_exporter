@@ -16,112 +16,110 @@
 
 package io.prometheus.jmx.test.http.ssl;
 
-import static io.prometheus.jmx.test.support.MetricsAssertions.assertThatMetricIn;
-import static io.prometheus.jmx.test.support.RequestResponseAssertions.assertThatResponseForRequest;
+import static io.prometheus.jmx.test.support.http.HttpResponseAssertions.assertHttpMetricsResponse;
+import static io.prometheus.jmx.test.support.metrics.MetricAssertion.assertMetric;
 
-import io.prometheus.jmx.test.BaseTest;
-import io.prometheus.jmx.test.Metric;
-import io.prometheus.jmx.test.MetricsParser;
-import io.prometheus.jmx.test.Mode;
-import io.prometheus.jmx.test.TestArgument;
-import io.prometheus.jmx.test.support.ContentConsumer;
-import io.prometheus.jmx.test.support.HealthyRequest;
-import io.prometheus.jmx.test.support.HealthyResponse;
-import io.prometheus.jmx.test.support.MetricsRequest;
-import io.prometheus.jmx.test.support.MetricsResponse;
-import io.prometheus.jmx.test.support.OpenMetricsRequest;
-import io.prometheus.jmx.test.support.OpenMetricsResponse;
-import io.prometheus.jmx.test.support.PrometheusMetricsRequest;
-import io.prometheus.jmx.test.support.PrometheusMetricsResponse;
+import io.prometheus.jmx.test.common.ExporterTestEnvironment;
+import io.prometheus.jmx.test.support.JmxExporterMode;
+import io.prometheus.jmx.test.support.http.HttpResponse;
+import io.prometheus.jmx.test.support.metrics.Metric;
+import io.prometheus.jmx.test.support.metrics.MetricsParser;
 import java.util.Collection;
+import java.util.Map;
+import java.util.function.BiConsumer;
 import java.util.stream.Stream;
-import org.antublue.test.engine.api.TestEngine;
+import org.antublue.verifyica.api.Verifyica;
 
-public class SSLWithJKSKeyStoreTest extends BaseTest implements ContentConsumer {
-
-    private static final String BASE_URL = "https://localhost";
+public class SSLWithJKSKeyStoreTest extends AbstractSSLTest
+        implements BiConsumer<ExporterTestEnvironment, HttpResponse> {
 
     /**
-     * Method to get the list of TestArguments
+     * Method to get the Stream of test environments
      *
-     * @return the return value
+     * @return the Stream of test environments
      */
-    @TestEngine.ArgumentSupplier
-    protected static Stream<TestArgument> arguments() {
+    @Verifyica.ArgumentSupplier
+    public static Stream<ExporterTestEnvironment> arguments() {
         // Filter eclipse-temurin:8 based Alpine images due to missing TLS cipher suites
         // https://github.com/adoptium/temurin-build/issues/3002
-        return BaseTest.arguments()
+        // https://bugs.openjdk.org/browse/JDK-8306037
+        return AbstractSSLTest.arguments()
                 .filter(
-                        testArgument ->
-                                !testArgument
-                                        .dockerImageName()
+                        exporterTestEnvironment ->
+                                !exporterTestEnvironment
+                                        .getJavaDockerImage()
                                         .contains("eclipse-temurin:8-alpine"));
     }
 
-    @TestEngine.Prepare
-    protected void setBaseUrl() {
-        testState.baseUrl(BASE_URL);
-    }
-
-    @TestEngine.Test
-    public void testHealthy() {
-        assertThatResponseForRequest(new HealthyRequest(testState.httpClient()))
-                .isSuperset(HealthyResponse.RESULT_200);
-    }
-
-    @TestEngine.Test
-    public void testMetrics() {
-        assertThatResponseForRequest(new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsOpenMetricsFormat() {
-        assertThatResponseForRequest(new OpenMetricsRequest(testState.httpClient()))
-                .isSuperset(OpenMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsPrometheusFormat() {
-        assertThatResponseForRequest(new PrometheusMetricsRequest(testState.httpClient()))
-                .isSuperset(PrometheusMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
     @Override
-    public void accept(String content) {
-        Collection<Metric> metrics = MetricsParser.parse(content);
+    public void accept(ExporterTestEnvironment exporterTestEnvironment, HttpResponse httpResponse) {
+        assertHttpMetricsResponse(httpResponse);
+
+        Map<String, Collection<Metric>> metrics = MetricsParser.parseMap(httpResponse);
+
+        boolean isJmxExporterModeJavaAgent =
+                exporterTestEnvironment.getJmxExporterMode() == JmxExporterMode.JavaAgent;
 
         String buildInfoName =
-                testArgument.mode() == Mode.JavaAgent
+                isJmxExporterModeJavaAgent
                         ? "jmx_prometheus_javaagent"
                         : "jmx_prometheus_httpserver";
 
-        assertThatMetricIn(metrics)
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
                 .withName("jmx_exporter_build_info")
                 .withLabel("name", buildInfoName)
-                .exists();
+                .withValue(1d)
+                .isPresent();
 
-        assertThatMetricIn(metrics)
-                .withName("java_lang_Memory_NonHeapMemoryUsage_committed")
-                .exists();
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jmx_scrape_error")
+                .withValue(0d)
+                .isPresent();
 
-        assertThatMetricIn(metrics)
+        assertMetric(metrics)
+                .ofType(Metric.Type.COUNTER)
+                .withName("jmx_config_reload_success_total")
+                .withValue(0d)
+                .isPresent();
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "nonheap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "heap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "nonheap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "heap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.UNTYPED)
                 .withName("io_prometheus_jmx_tabularData_Server_1_Disk_Usage_Table_size")
                 .withLabel("source", "/dev/sda1")
-                .withValue(7.516192768E9)
-                .exists();
+                .withValue(7.516192768E9d)
+                .isPresent();
 
-        assertThatMetricIn(metrics)
+        assertMetric(metrics)
+                .ofType(Metric.Type.UNTYPED)
                 .withName("io_prometheus_jmx_tabularData_Server_2_Disk_Usage_Table_pcent")
                 .withLabel("source", "/dev/sda2")
-                .withValue(0.8)
-                .exists();
-
-        assertThatMetricIn(metrics)
-                .withName("jvm_threads_state")
-                .exists(testArgument.mode() == Mode.JavaAgent);
+                .withValue(0.8d)
+                .isPresent();
     }
 }

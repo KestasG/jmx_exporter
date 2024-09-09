@@ -120,7 +120,10 @@ class JmxScraper {
                 environment.put(
                         RMIConnectorServer.RMI_CLIENT_SOCKET_FACTORY_ATTRIBUTE,
                         clientSocketFactory);
-                environment.put("com.sun.jndi.rmi.factory.socket", clientSocketFactory);
+
+                if (!"true".equalsIgnoreCase(System.getenv("RMI_REGISTRY_SSL_DISABLED"))) {
+                    environment.put("com.sun.jndi.rmi.factory.socket", clientSocketFactory);
+                }
             }
 
             jmxc = JMXConnectorFactory.connect(new JMXServiceURL(jmxUrl), environment);
@@ -212,13 +215,16 @@ class JmxScraper {
             return;
         }
 
+        final String mBeanNameString = mBeanName.toString();
+        final String mBeanDomain = mBeanName.getDomain();
+
         for (Object object : attributes) {
             // The contents of an AttributeList should all be Attribute instances, but we'll verify
             // that.
             if (object instanceof Attribute) {
                 Attribute attribute = (Attribute) object;
                 String attributeName = attribute.getName();
-                if (mBeanName.toString().equals("java.lang:type=Runtime")
+                if (mBeanNameString.equals("java.lang:type=Runtime")
                         && (attributeName.equalsIgnoreCase("SystemProperties")
                                 || attributeName.equalsIgnoreCase("ClassPath")
                                 || attributeName.equalsIgnoreCase("BootClassPath")
@@ -226,7 +232,7 @@ class JmxScraper {
                     // Skip this attributes for the "java.lang:type=Runtime" MBean because
                     // getting the values is expensive and the values are ultimately ignored
                     continue;
-                } else if (mBeanName.toString().equals("jdk.management.jfr:type=FlightRecorder")) {
+                } else if (mBeanNameString.equals("jdk.management.jfr:type=FlightRecorder")) {
                     // Skip the FlightRecorderMXBean
                     continue;
                 }
@@ -236,7 +242,7 @@ class JmxScraper {
                 LOGGER.log(FINE, "%s_%s process", mBeanName, mBeanAttributeInfo.getName());
                 processBeanValue(
                         mBeanName,
-                        mBeanName.getDomain(),
+                        mBeanDomain,
                         jmxMBeanPropertyCache.getKeyPropertyList(mBeanName),
                         new LinkedList<>(),
                         mBeanAttributeInfo.getName(),

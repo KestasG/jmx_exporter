@@ -16,8 +16,9 @@
 
 package io.prometheus.jmx;
 
-import io.prometheus.client.Collector.Type;
+import io.prometheus.metrics.model.snapshots.PrometheusNaming;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * MatchedRule is the result of matching a JMX bean against the rules present in the configuration
@@ -28,7 +29,7 @@ public class MatchedRule {
 
     final String name;
     final String matchName;
-    final Type type;
+    final String type;
     final String help;
     final List<String> labelNames;
     final List<String> labelValues;
@@ -51,7 +52,7 @@ public class MatchedRule {
     public MatchedRule(
             final String name,
             final String matchName,
-            final Type type,
+            final String type,
             final String help,
             final List<String> labelNames,
             final List<String> labelValues,
@@ -65,6 +66,18 @@ public class MatchedRule {
         this.labelValues = labelValues;
         this.value = value;
         this.valueFactor = valueFactor;
+    }
+
+    public MatchedRule withValue(double value) {
+        return new MatchedRule(
+                PrometheusNaming.sanitizeMetricName(this.name),
+                this.matchName,
+                this.type,
+                this.help,
+                this.labelNames,
+                this.labelValues,
+                value,
+                this.valueFactor);
     }
 
     /**
@@ -84,5 +97,52 @@ public class MatchedRule {
 
     public boolean isMatched() {
         return !isUnmatched();
+    }
+
+    @Override
+    public String toString() {
+        return "MatchedRule{"
+                + "name='"
+                + name
+                + '\''
+                + ", matchName='"
+                + matchName
+                + '\''
+                + ", type='"
+                + type
+                + '\''
+                + ", help='"
+                + help
+                + '\''
+                + ", labelNames="
+                + labelNames
+                + ", labelValues="
+                + labelValues
+                + ", value="
+                + value
+                + ", valueFactor="
+                + valueFactor
+                + '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        MatchedRule that = (MatchedRule) o;
+        return Double.compare(valueFactor, that.valueFactor) == 0
+                && Objects.equals(name, that.name)
+                && Objects.equals(matchName, that.matchName)
+                && Objects.equals(type, that.type)
+                && Objects.equals(help, that.help)
+                && Objects.equals(labelNames, that.labelNames)
+                && Objects.equals(labelValues, that.labelValues)
+                && Objects.equals(value, that.value);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(
+                name, matchName, type, help, labelNames, labelValues, value, valueFactor);
     }
 }

@@ -16,76 +16,62 @@
 
 package io.prometheus.jmx.test;
 
+import static io.prometheus.jmx.test.support.http.HttpResponseAssertions.assertHttpMetricsResponse;
 import static org.assertj.core.api.Assertions.fail;
 
-import io.prometheus.jmx.test.support.ContentConsumer;
-import io.prometheus.jmx.test.support.HealthyRequest;
-import io.prometheus.jmx.test.support.HealthyResponse;
-import io.prometheus.jmx.test.support.MetricsRequest;
-import io.prometheus.jmx.test.support.MetricsResponse;
-import io.prometheus.jmx.test.support.OpenMetricsRequest;
-import io.prometheus.jmx.test.support.OpenMetricsResponse;
-import io.prometheus.jmx.test.support.PrometheusMetricsRequest;
-import io.prometheus.jmx.test.support.PrometheusMetricsResponse;
-import io.prometheus.jmx.test.support.RequestResponseAssertions;
+import io.prometheus.jmx.test.common.AbstractExporterTest;
+import io.prometheus.jmx.test.common.ExporterTestEnvironment;
+import io.prometheus.jmx.test.support.http.HttpResponse;
+import io.prometheus.jmx.test.support.metrics.Metric;
+import io.prometheus.jmx.test.support.metrics.MetricsParser;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
-import org.antublue.test.engine.api.TestEngine;
+import java.util.function.BiConsumer;
 
-public class ExcludeObjectNameAttributesTest extends BaseTest implements ContentConsumer {
-
-    @TestEngine.Test
-    public void testHealthy() {
-        RequestResponseAssertions.assertThatResponseForRequest(
-                        new HealthyRequest(testState.httpClient()))
-                .isSuperset(HealthyResponse.RESULT_200);
-    }
-
-    @TestEngine.Test
-    public void testMetrics() {
-        RequestResponseAssertions.assertThatResponseForRequest(
-                        new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsOpenMetricsFormat() {
-        RequestResponseAssertions.assertThatResponseForRequest(
-                        new OpenMetricsRequest(testState.httpClient()))
-                .isSuperset(OpenMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsPrometheusFormat() {
-        RequestResponseAssertions.assertThatResponseForRequest(
-                        new PrometheusMetricsRequest(testState.httpClient()))
-                .isSuperset(PrometheusMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
+public class ExcludeObjectNameAttributesTest extends AbstractExporterTest
+        implements BiConsumer<ExporterTestEnvironment, HttpResponse> {
 
     @Override
-    public void accept(String content) {
-        Collection<Metric> metricCollection = MetricsParser.parse(content);
+    public void accept(ExporterTestEnvironment exporterTestEnvironment, HttpResponse httpResponse) {
+        assertHttpMetricsResponse(httpResponse);
+
+        Collection<Metric> metrics = MetricsParser.parseCollection(httpResponse);
 
         Set<String> excludeAttributeNameSet = new HashSet<>();
         excludeAttributeNameSet.add("_ClassPath");
         excludeAttributeNameSet.add("_SystemProperties");
 
+        Set<String> excludeJavaLangMemoryAttributeSet = new HashSet<>();
+        excludeJavaLangMemoryAttributeSet.add("NonHeapMemoryUsage");
+        excludeJavaLangMemoryAttributeSet.add("Verbose");
+        excludeJavaLangMemoryAttributeSet.add("ObjectPendingFinalizationCount");
+
         /*
          * Assert that we don't have any metrics that start with ...
          *
          * name = java_lang*
+         * attribute = _ClassPath
+         * attribute = __SystemProperties
+         *
+         * ... or...
+         *
+         * name = java_lang_Memory
+         * attribute = _Verbose
          */
-        metricCollection.forEach(
+        metrics.forEach(
                 metric -> {
-                    String name = metric.getName();
-                    if (name.contains("java_lang")) {
+                    String name = metric.name();
+                    if (name.equals("java_lang_Memory")) {
+                        for (String attributeName : excludeJavaLangMemoryAttributeSet) {
+                            if (name.equals(attributeName)) {
+                                fail("metric [" + metric + "] found");
+                            }
+                        }
+                    } else {
                         for (String attributeName : excludeAttributeNameSet) {
                             if (name.contains(attributeName)) {
-                                fail("metric found");
+                                fail("metric [" + metric + "] found");
                             }
                         }
                     }

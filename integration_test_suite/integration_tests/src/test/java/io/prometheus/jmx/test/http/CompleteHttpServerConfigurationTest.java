@@ -16,187 +16,269 @@
 
 package io.prometheus.jmx.test.http;
 
-import static io.prometheus.jmx.test.support.MetricsAssertions.assertThatMetricIn;
-import static io.prometheus.jmx.test.support.RequestResponseAssertions.assertThatResponseForRequest;
-import static org.assertj.core.api.Assertions.assertThat;
+import static io.prometheus.jmx.test.support.http.HttpResponseAssertions.assertHttpMetricsResponse;
+import static io.prometheus.jmx.test.support.http.HttpResponseAssertions.assertHttpResponseCode;
+import static io.prometheus.jmx.test.support.metrics.MetricAssertion.assertMetric;
 
-import io.prometheus.jmx.test.BaseTest;
-import io.prometheus.jmx.test.Metric;
-import io.prometheus.jmx.test.MetricsParser;
-import io.prometheus.jmx.test.Mode;
-import io.prometheus.jmx.test.TestArgument;
-import io.prometheus.jmx.test.credentials.BasicAuthenticationCredentials;
-import io.prometheus.jmx.test.support.ContentConsumer;
-import io.prometheus.jmx.test.support.HealthyRequest;
-import io.prometheus.jmx.test.support.HealthyResponse;
-import io.prometheus.jmx.test.support.MetricsRequest;
-import io.prometheus.jmx.test.support.MetricsResponse;
-import io.prometheus.jmx.test.support.OpenMetricsResponse;
-import io.prometheus.jmx.test.support.PrometheusMetricsResponse;
-import io.prometheus.jmx.test.support.Response;
+import io.prometheus.jmx.test.common.AbstractExporterTest;
+import io.prometheus.jmx.test.common.ExporterTestEnvironment;
+import io.prometheus.jmx.test.support.JmxExporterMode;
+import io.prometheus.jmx.test.support.http.HttpBasicAuthenticationCredentials;
+import io.prometheus.jmx.test.support.http.HttpHealthyRequest;
+import io.prometheus.jmx.test.support.http.HttpOpenMetricsRequest;
+import io.prometheus.jmx.test.support.http.HttpPrometheusMetricsRequest;
+import io.prometheus.jmx.test.support.http.HttpPrometheusProtobufMetricsRequest;
+import io.prometheus.jmx.test.support.http.HttpResponse;
+import io.prometheus.jmx.test.support.metrics.Metric;
+import io.prometheus.jmx.test.support.metrics.MetricsParser;
 import java.util.Collection;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
-import org.antublue.test.engine.api.TestEngine;
+import org.antublue.verifyica.api.ArgumentContext;
+import org.antublue.verifyica.api.Verifyica;
 
-public class CompleteHttpServerConfigurationTest extends BaseTest implements ContentConsumer {
+public class CompleteHttpServerConfigurationTest extends AbstractExporterTest
+        implements BiConsumer<ExporterTestEnvironment, HttpResponse> {
 
-    private final String BASE_URL = "https://localhost";
+    private static final String BASE_URL = "https://localhost";
+
     private final String VALID_USERNAME = "Prometheus";
+
     private final String VALID_PASSWORD = "secret";
+
     private final String[] TEST_USERNAMES =
             new String[] {VALID_USERNAME, "prometheus", "bad", "", null};
+
     private final String[] TEST_PASSWORDS =
             new String[] {VALID_PASSWORD, "Secret", "bad", "", null};
 
     /**
-     * Method to get the list of TestArguments
+     * Method to get the Stream of test environments
      *
-     * @return the return value
+     * @return the Stream of test environments
      */
-    @TestEngine.ArgumentSupplier
-    protected static Stream<TestArgument> arguments() {
+    @Verifyica.ArgumentSupplier
+    public static Stream<ExporterTestEnvironment> arguments() {
         // Filter eclipse-temurin:8 based Alpine images due to missing TLS cipher suites
         // https://github.com/adoptium/temurin-build/issues/3002
-        return BaseTest.arguments()
+        // https://bugs.openjdk.org/browse/JDK-8306037
+        return AbstractExporterTest.arguments()
                 .filter(
-                        testArgument ->
-                                !testArgument
-                                        .dockerImageName()
-                                        .contains("eclipse-temurin:8-alpine"));
+                        exporterTestEnvironment ->
+                                !exporterTestEnvironment
+                                        .getJavaDockerImage()
+                                        .contains("eclipse-temurin:8-alpine"))
+                .map(
+                        new Function<ExporterTestEnvironment, ExporterTestEnvironment>() {
+                            @Override
+                            public ExporterTestEnvironment apply(
+                                    ExporterTestEnvironment ExporterTestEnvironment) {
+                                return ExporterTestEnvironment.setBaseUrl(BASE_URL);
+                            }
+                        });
     }
 
-    @TestEngine.Prepare
-    protected void setBaseUrl() {
-        testState.baseUrl(BASE_URL);
-    }
+    @Verifyica.Test
+    public void testHealthy(ArgumentContext argumentContext) {
+        ExporterTestEnvironment exporterTestEnvironment =
+                argumentContext.getTestArgument(ExporterTestEnvironment.class).getPayload();
 
-    @TestEngine.Test
-    public void testHealthy() {
         for (String username : TEST_USERNAMES) {
             for (String password : TEST_PASSWORDS) {
-                Response expectedHealthyResponse = HealthyResponse.RESULT_401;
+                final AtomicInteger code = new AtomicInteger(HttpResponse.UNAUTHORIZED);
 
                 if (VALID_USERNAME.equals(username) && VALID_PASSWORD.equals(password)) {
-                    expectedHealthyResponse = HealthyResponse.RESULT_200;
+                    code.set(HttpResponse.OK);
                 }
 
-                assertThatResponseForRequest(
-                                new HealthyRequest(testState.httpClient())
-                                        .withCredentials(
-                                                new BasicAuthenticationCredentials(
-                                                        username, password)))
-                        .isSuperset(expectedHealthyResponse);
+                new HttpHealthyRequest()
+                        .credentials(new HttpBasicAuthenticationCredentials(username, password))
+                        .send(exporterTestEnvironment.getHttpClient())
+                        .accept(response -> assertHttpResponseCode(response, code.get()));
             }
         }
     }
 
-    @TestEngine.Test
-    public void testMetrics() {
+    @Verifyica.Test
+    public void testMetrics(ArgumentContext argumentContext) {
+        ExporterTestEnvironment exporterTestEnvironment =
+                argumentContext.getTestArgument(ExporterTestEnvironment.class).getPayload();
+
         for (String username : TEST_USERNAMES) {
             for (String password : TEST_PASSWORDS) {
-                Response expectedMetricsResponse = MetricsResponse.RESULT_401;
+                final AtomicInteger code = new AtomicInteger(HttpResponse.UNAUTHORIZED);
 
                 if (VALID_USERNAME.equals(username) && VALID_PASSWORD.equals(password)) {
-                    expectedMetricsResponse = MetricsResponse.RESULT_200;
+                    code.set(HttpResponse.OK);
                 }
 
-                Response actualMetricsResponse =
-                        new MetricsRequest(testState.httpClient())
-                                .withCredentials(
-                                        new BasicAuthenticationCredentials(username, password))
-                                .execute();
-
-                assertThat(actualMetricsResponse.isSuperset(expectedMetricsResponse)).isNotNull();
-
-                if (actualMetricsResponse.code() == 200) {
-                    actualMetricsResponse.dispatch(this);
-                }
+                new HttpPrometheusMetricsRequest()
+                        .credentials(new HttpBasicAuthenticationCredentials(username, password))
+                        .send(exporterTestEnvironment.getHttpClient())
+                        .accept(
+                                response -> {
+                                    assertHttpResponseCode(response, code.get());
+                                    if (response.statusCode() == HttpResponse.OK) {
+                                        accept(exporterTestEnvironment, response);
+                                    }
+                                });
             }
         }
     }
 
-    @TestEngine.Test
-    public void testMetricsOpenMetricsFormat() {
+    @Verifyica.Test
+    public void testMetricsOpenMetricsFormat(ArgumentContext argumentContext) {
+        ExporterTestEnvironment exporterTestEnvironment =
+                argumentContext.getTestArgument(ExporterTestEnvironment.class).getPayload();
+
         for (String username : TEST_USERNAMES) {
             for (String password : TEST_PASSWORDS) {
-                Response expectedMetricsResponse = OpenMetricsResponse.RESULT_401;
+                final AtomicInteger code = new AtomicInteger(HttpResponse.UNAUTHORIZED);
 
                 if (VALID_USERNAME.equals(username) && VALID_PASSWORD.equals(password)) {
-                    expectedMetricsResponse = OpenMetricsResponse.RESULT_200;
+                    code.set(HttpResponse.OK);
                 }
 
-                Response actualMetricsResponse =
-                        new MetricsRequest(testState.httpClient())
-                                .withCredentials(
-                                        new BasicAuthenticationCredentials(username, password))
-                                .execute();
-
-                assertThat(actualMetricsResponse.isSuperset(expectedMetricsResponse)).isNotNull();
-
-                if (actualMetricsResponse.code() == 200) {
-                    actualMetricsResponse.dispatch(this);
-                }
+                new HttpOpenMetricsRequest()
+                        .credentials(new HttpBasicAuthenticationCredentials(username, password))
+                        .send(exporterTestEnvironment.getHttpClient())
+                        .accept(
+                                response -> {
+                                    assertHttpResponseCode(response, code.get());
+                                    if (response.statusCode() == HttpResponse.OK) {
+                                        accept(exporterTestEnvironment, response);
+                                    }
+                                });
             }
         }
     }
 
-    @TestEngine.Test
-    public void testMetricsPrometheusFormat() {
+    @Verifyica.Test
+    public void testMetricsPrometheusFormat(ArgumentContext argumentContext) {
+        ExporterTestEnvironment exporterTestEnvironment =
+                argumentContext.getTestArgument(ExporterTestEnvironment.class).getPayload();
+
         for (String username : TEST_USERNAMES) {
             for (String password : TEST_PASSWORDS) {
-                Response expectedMetricsResponse = PrometheusMetricsResponse.RESULT_401;
+                final AtomicInteger code = new AtomicInteger(HttpResponse.UNAUTHORIZED);
 
                 if (VALID_USERNAME.equals(username) && VALID_PASSWORD.equals(password)) {
-                    expectedMetricsResponse = PrometheusMetricsResponse.RESULT_200;
+                    code.set(HttpResponse.OK);
                 }
 
-                Response actualMetricsResponse =
-                        new MetricsRequest(testState.httpClient())
-                                .withCredentials(
-                                        new BasicAuthenticationCredentials(username, password))
-                                .execute();
+                new HttpPrometheusMetricsRequest()
+                        .credentials(new HttpBasicAuthenticationCredentials(username, password))
+                        .send(exporterTestEnvironment.getHttpClient())
+                        .accept(
+                                response -> {
+                                    assertHttpResponseCode(response, code.get());
+                                    if (response.statusCode() == HttpResponse.OK) {
+                                        accept(exporterTestEnvironment, response);
+                                    }
+                                });
+            }
+        }
+    }
 
-                assertThat(actualMetricsResponse.isSuperset(expectedMetricsResponse)).isNotNull();
+    @Verifyica.Test
+    public void testMetricsPrometheusProtobufFormat(ArgumentContext argumentContext) {
+        ExporterTestEnvironment exporterTestEnvironment =
+                argumentContext.getTestArgument(ExporterTestEnvironment.class).getPayload();
 
-                if (actualMetricsResponse.code() == 200) {
-                    actualMetricsResponse.dispatch(this);
+        for (String username : TEST_USERNAMES) {
+            for (String password : TEST_PASSWORDS) {
+                final AtomicInteger code = new AtomicInteger(HttpResponse.UNAUTHORIZED);
+
+                if (VALID_USERNAME.equals(username) && VALID_PASSWORD.equals(password)) {
+                    code.set(HttpResponse.OK);
                 }
+
+                new HttpPrometheusProtobufMetricsRequest()
+                        .credentials(new HttpBasicAuthenticationCredentials(username, password))
+                        .send(exporterTestEnvironment.getHttpClient())
+                        .accept(
+                                response -> {
+                                    assertHttpResponseCode(response, code.get());
+                                    if (response.statusCode() == HttpResponse.OK) {
+                                        accept(exporterTestEnvironment, response);
+                                    }
+                                });
             }
         }
     }
 
     @Override
-    public void accept(String content) {
-        Collection<Metric> metrics = MetricsParser.parse(content);
+    public void accept(ExporterTestEnvironment exporterTestEnvironment, HttpResponse httpResponse) {
+        assertHttpMetricsResponse(httpResponse);
+
+        Map<String, Collection<Metric>> metrics = MetricsParser.parseMap(httpResponse);
+
+        boolean isJmxExporterModeJavaAgent =
+                exporterTestEnvironment.getJmxExporterMode() == JmxExporterMode.JavaAgent;
 
         String buildInfoName =
-                testArgument.mode() == Mode.JavaAgent
+                isJmxExporterModeJavaAgent
                         ? "jmx_prometheus_javaagent"
                         : "jmx_prometheus_httpserver";
 
-        assertThatMetricIn(metrics)
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
                 .withName("jmx_exporter_build_info")
                 .withLabel("name", buildInfoName)
-                .exists();
+                .withValue(1d)
+                .isPresent();
 
-        assertThatMetricIn(metrics)
-                .withName("java_lang_Memory_NonHeapMemoryUsage_committed")
-                .exists();
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jmx_scrape_error")
+                .withValue(0d)
+                .isPresent();
 
-        assertThatMetricIn(metrics)
+        assertMetric(metrics)
+                .ofType(Metric.Type.COUNTER)
+                .withName("jmx_config_reload_success_total")
+                .withValue(0d)
+                .isPresent();
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "nonheap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "heap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "nonheap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.GAUGE)
+                .withName("jvm_memory_used_bytes")
+                .withLabel("area", "heap")
+                .isPresentWhen(isJmxExporterModeJavaAgent);
+
+        assertMetric(metrics)
+                .ofType(Metric.Type.UNTYPED)
                 .withName("io_prometheus_jmx_tabularData_Server_1_Disk_Usage_Table_size")
                 .withLabel("source", "/dev/sda1")
-                .withValue(7.516192768E9)
-                .exists();
+                .withValue(7.516192768E9d)
+                .isPresent();
 
-        assertThatMetricIn(metrics)
+        assertMetric(metrics)
+                .ofType(Metric.Type.UNTYPED)
                 .withName("io_prometheus_jmx_tabularData_Server_2_Disk_Usage_Table_pcent")
                 .withLabel("source", "/dev/sda2")
-                .withValue(0.8)
-                .exists();
-
-        assertThatMetricIn(metrics)
-                .withName("jvm_threads_state")
-                .exists(testArgument.mode() == Mode.JavaAgent);
+                .withValue(0.8d)
+                .isPresent();
     }
 }
