@@ -28,7 +28,9 @@ import io.prometheus.jmx.common.http.authenticator.PBKDF2Authenticator;
 import io.prometheus.jmx.common.http.authenticator.PlaintextAuthenticator;
 import io.prometheus.jmx.common.http.ssl.SSLContextFactory;
 import io.prometheus.jmx.common.yaml.YamlMapAccessor;
+import io.prometheus.metrics.config.PrometheusProperties;
 import io.prometheus.metrics.exporter.httpserver.HTTPServer;
+import io.prometheus.metrics.exporter.httpserver.MetricsHandler;
 import io.prometheus.metrics.model.registry.PrometheusRegistry;
 import java.io.File;
 import java.io.FileReader;
@@ -109,11 +111,13 @@ public class HTTPServerFactory {
             File exporterYamlFile)
             throws IOException {
 
+        MetricsHandler han = new MetricsHandler(PrometheusProperties.get(), prometheusRegistry);
         HTTPServer.Builder httpServerBuilder =
                 HTTPServer.builder()
                         .inetAddress(inetAddress)
                         .port(port)
-                        .registry(prometheusRegistry);
+                        .registry(prometheusRegistry)
+                        .defaultHandler(han);
 
         createMapAccessor(exporterYamlFile);
         configureThreads(httpServerBuilder);

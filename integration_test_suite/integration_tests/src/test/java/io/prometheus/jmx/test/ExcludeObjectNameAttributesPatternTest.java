@@ -18,48 +18,24 @@ package io.prometheus.jmx.test;
 
 import static org.assertj.core.api.Assertions.*;
 
+import io.prometheus.jmx.test.common.AbstractExporterTest;
+import io.prometheus.jmx.test.common.ExporterTestEnvironment;
 import io.prometheus.jmx.test.support.*;
+import io.prometheus.jmx.test.support.http.HttpResponse;
+import io.prometheus.jmx.test.support.metrics.Metric;
+import io.prometheus.jmx.test.support.metrics.MetricsParser;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
-import org.antublue.test.engine.api.TestEngine;
+import java.util.function.BiConsumer;
 
-public class ExcludeObjectNameAttributesPatternTest extends BaseTest implements ContentConsumer {
+// import org.antublue.test.engine.api.TestEngine;
 
-    @TestEngine.Test
-    public void testHealthy() {
-        RequestResponseAssertions.assertThatResponseForRequest(
-                        new HealthyRequest(testState.httpClient()))
-                .isSuperset(HealthyResponse.RESULT_200);
-    }
-
-    @TestEngine.Test
-    public void testMetrics() {
-        RequestResponseAssertions.assertThatResponseForRequest(
-                        new MetricsRequest(testState.httpClient()))
-                .isSuperset(MetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsOpenMetricsFormat() {
-        RequestResponseAssertions.assertThatResponseForRequest(
-                        new OpenMetricsRequest(testState.httpClient()))
-                .isSuperset(OpenMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
-    @TestEngine.Test
-    public void testMetricsPrometheusFormat() {
-        RequestResponseAssertions.assertThatResponseForRequest(
-                        new PrometheusMetricsRequest(testState.httpClient()))
-                .isSuperset(PrometheusMetricsResponse.RESULT_200)
-                .dispatch(this);
-    }
-
+public class ExcludeObjectNameAttributesPatternTest extends AbstractExporterTest
+        implements BiConsumer<ExporterTestEnvironment, HttpResponse> {
     @Override
-    public void accept(String content) {
-        Collection<Metric> metricCollection = MetricsParser.parse(content);
+    public void accept(ExporterTestEnvironment exporterTestEnvironment, HttpResponse httpResponse) {
+        Collection<Metric> metrics = MetricsParser.parseCollection(httpResponse);
 
         Set<String> excludeAttributeNameSet = new HashSet<>();
         excludeAttributeNameSet.add("_ClassPath");
@@ -72,9 +48,9 @@ public class ExcludeObjectNameAttributesPatternTest extends BaseTest implements 
          * name = java_lang*
          */
         Set<String> validAttributesFound = new HashSet<>();
-        metricCollection.forEach(
+        metrics.forEach(
                 metric -> {
-                    String name = metric.getName();
+                    String name = metric.name();
                     // test global exclusion filter
                     if (name.contains("_ObjectName")) fail("metric found: " + name);
                     // test exclusion by object name patterns

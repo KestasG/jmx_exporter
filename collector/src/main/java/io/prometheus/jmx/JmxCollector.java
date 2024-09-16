@@ -34,14 +34,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.management.MalformedObjectNameException;
@@ -88,6 +81,15 @@ public class JmxCollector implements MultiCollector {
         long lastUpdate = 0L;
 
         MatchedRulesCache rulesCache;
+        Map<String, Set<String>> unmatchedRegexes = new HashMap();
+
+        public Map<String, Set<String>> getUnmatchedRegexes() {
+            return unmatchedRegexes;
+        }
+
+        public void setUnmatchedRegexes(Map<String, Set<String>> unmatchedRegexes) {
+            this.unmatchedRegexes = unmatchedRegexes;
+        }
     }
 
     private PrometheusRegistry prometheusRegistry;
@@ -438,11 +440,14 @@ public class JmxCollector implements MultiCollector {
         Config config;
         MatchedRulesCache.StalenessTracker stalenessTracker;
 
+        private Map<String, Set<String>> unmatchedRegexes;
+
         private static final char SEP = '_';
 
         Receiver(Config config, MatchedRulesCache.StalenessTracker stalenessTracker) {
             this.config = config;
             this.stalenessTracker = stalenessTracker;
+            this.unmatchedRegexes = config.getUnmatchedRegexes();
         }
 
         // [] and () are special in regexes, so swtich to <>.
@@ -556,6 +561,12 @@ public class JmxCollector implements MultiCollector {
                 String matchName = beanName + attributeName + ": " + matchBeanValue;
 
                 if (rule.cache) {
+                    Set<String> unmatchedPatterns =
+                            unmatchedRegexes.computeIfAbsent(matchName, key -> new HashSet());
+                    if (unmatchedPatterns.contains(rule.pattern.toString())) {
+                        stalenessTracker.addUnmatched(matchName, rule.pattern.toString());
+                        continue;
+                    }
                     MatchedRule cachedRule = config.rulesCache.get(rule, matchName);
                     if (cachedRule != null) {
                         stalenessTracker.add(rule, matchName);
@@ -572,9 +583,18 @@ public class JmxCollector implements MultiCollector {
 
                 Matcher matcher = null;
                 if (rule.pattern != null) {
+                    Set<String> unmatchedPatterns =
+                            unmatchedRegexes.computeIfAbsent(matchName, key -> new HashSet());
+                    if (unmatchedPatterns.contains(rule.pattern.toString())) {
+                        stalenessTracker.addUnmatched(matchName, rule.pattern.toString());
+                        continue;
+                    }
+
                     matcher = rule.pattern.matcher(matchName);
                     if (!matcher.matches()) {
                         addToCache(rule, matchName, MatchedRule.unmatched());
+                        unmatchedPatterns.add(rule.pattern.toString());
+                        stalenessTracker.addUnmatched(matchName, rule.pattern.toString());
                         continue;
                     }
                 }
@@ -674,6 +694,7 @@ public class JmxCollector implements MultiCollector {
             }
 
             Number value;
+            // if value is defined in rule configuration
             if (matchedRule.value != null) {
                 beanValue = matchedRule.value;
             }
@@ -745,6 +766,7 @@ public class JmxCollector implements MultiCollector {
         }
 
         config.rulesCache.evictStaleEntries(stalenessTracker);
+        config.setUnmatchedRegexes(stalenessTracker.getUnmatched());
 
         jmxScrapeDurationSeconds.set((System.nanoTime() - start) / 1.0E9);
         jmxScrapeError.set(error);

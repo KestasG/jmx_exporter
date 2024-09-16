@@ -65,6 +65,7 @@ public class MatchedRulesCache {
 
     public static class StalenessTracker {
         private final Map<JmxCollector.Rule, Set<String>> lastCachedEntries = new HashMap<>();
+        private Map<String, Set<String>> usedUnmatchedRegexes = new HashMap();
 
         public void add(final JmxCollector.Rule rule, final String cacheKey) {
             Set<String> lastCachedEntriesForRule =
@@ -84,6 +85,14 @@ public class MatchedRulesCache {
                 count += cacheKeys.size();
             }
             return count;
+        }
+
+        public void addUnmatched(String matchName, String regex) {
+            usedUnmatchedRegexes.computeIfAbsent(matchName, key -> new HashSet()).add(regex);
+        }
+
+        public Map<String, Set<String>> getUnmatched() {
+            return usedUnmatchedRegexes;
         }
     }
 }
